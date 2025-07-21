@@ -327,6 +327,7 @@ typedef struct
     volatile uint8_t   *ExtIntPort;     // use port and bitmask to read input at AVR in ISR
     uint8_t   ExtIntMask;     // digitalRead is too slow on AVR
     int16_t   myDccAddress;	// Cached value of DCC Address from CVs
+    int16_t   dccConsistAddress; // Cached value of DCC Consist Address
     uint8_t   inAccDecDCCAddrNextReceivedMode;
     uint8_t   cv29Value;
     #ifdef DCC_DEBUG
@@ -873,6 +874,9 @@ uint8_t writeCV (unsigned int CV, uint8_t Value)
 {
     switch (CV)
     {
+    case CV_MULTIFUNCTION_CONSIST_ADDRESS:
+        DccProcState.dccConsistAddress = Value;
+        break;
     case CV_29_CONFIG:
         // copy addressmode Bit to Flags
         Value = Value &  ~CV29_RAILCOM_ENABLE;   // Bidi (RailCom) Bit must not be enabled,
@@ -1038,152 +1042,163 @@ void processMultiFunctionMessage (uint16_t Addr, DCC_ADDR_TYPE AddrType, uint8_t
             return ;
     }
 
-    // We are looking for FLAGS_MY_ADDRESS_ONLY but it does not match and it is not a Broadcast Address then return
-    else if ( (DccProcState.Flags & FLAGS_MY_ADDRESS_ONLY) && (Addr != getMyAddr()) && (Addr != 0))
-        return ;
-
-    switch (CmdMasked)
+    // Check DCC Address if FLAGS_MY_ADDRESS_ONLY, or Broadcast Address, or DCC Primary / Consist Address
+    else
     {
-    case 0b00000000:  // Decoder Control
-        switch (Cmd & 0b00001110)
+        // The following commands (speed, direction and functions) respond at DCC Consist Address if it is defined (not zero)
+        uint16_t dccConsistAddrIfDefined = (DccProcState.dccConsistAddress == 0 ? getMyAddr():DccProcState.dccConsistAddress);
+        if (!(DccProcState.Flags & FLAGS_MY_ADDRESS_ONLY) || (Addr == (dccConsistAddrIfDefined)) || (Addr == 0))
         {
-        case 0b00000000:
-            if (notifyDccReset)
-                notifyDccReset (Cmd & 0b00000001) ;
-            break ;
-
-        case 0b00000010:  // Factory Test
-            break ;
-
-        case 0b00000110:  // Set Decoder Flags
-            break ;
-
-        case 0b00001010:  // Set Advanced Addressing
-            break ;
-
-        case 0b00001110:  // Decoder Acknowledgment
-            break ;
-
-        default:    // Reserved
-            ;
-        }
-        break ;
-
-    case 0b00100000:  // Advanced Operations
-        switch (Cmd & 0b00011111)
-        {
-        case 0b00011111:
-            if (notifyDccSpeed)
+            switch (CmdMasked)
             {
-                switch (Data1 & 0b01111111)
+            case 0b00000000:  // Decoder Control
+                switch (Cmd & 0b00001110)
                 {
-                case 0b00000000:  // 0=STOP
-                    speed = 1 ;     // => 1
+                case 0b00000000:
+                    if (notifyDccReset)
+                        notifyDccReset (Cmd & 0b00000001) ;
                     break ;
 
-                case 0b00000001:  // 1=EMERGENCY_STOP
-                    speed = 0 ;     // => 0
+                case 0b00000010:  // Factory Test
                     break ;
 
-                default:          // 2..127
-                    speed = (Data1 & 0b01111111) ;
+                case 0b00000110:  // Set Decoder Flags
+                    break ;
+
+                case 0b00001010:  // Set Advanced Addressing
+                    break ;
+
+                case 0b00001110:  // Decoder Acknowledgment
+                    break ;
+
+                default:    // Reserved
+                    ;
                 }
-                dir = (DCC_DIRECTION) ( (Data1 & 0b10000000) >> 7) ;
-                notifyDccSpeed (Addr, AddrType, speed, dir, SPEED_STEP_128) ;
-            }
-        }
-        break;
-
-    case 0b01000000:
-    case 0b01100000:
-        //TODO should we cache this info in DCC_PROCESSOR_STATE.Flags ?
-        #ifdef NMRA_DCC_ENABLE_14_SPEED_STEP_MODE
-        speedSteps = (DccProcState.cv29Value & CV29_F0_LOCATION) ? SPEED_STEP_28 : SPEED_STEP_14 ;
-        #else
-        speedSteps = SPEED_STEP_28 ;
-        #endif
-        if (notifyDccSpeed)
-        {
-            switch (Cmd & 0b00011111)
-            {
-            case 0b00000000:    // 0 0000 = STOP
-            case 0b00010000:    // 1 0000 = STOP
-                speed = 1 ;       // => 1
                 break ;
 
-            case 0b00000001:    // 0 0001 = EMERGENCY STOP
-            case 0b00010001:    // 1 0001 = EMERGENCY STOP
-                speed = 0 ;       // => 0
-                break ;
+            case 0b00100000:  // Advanced Operations
+                switch (Cmd & 0b00011111)
+                {
+                case 0b00011111:
+                    if (notifyDccSpeed)
+                    {
+                        switch (Data1 & 0b01111111)
+                        {
+                        case 0b00000000:  // 0=STOP
+                            speed = 1 ;     // => 1
+                            break ;
 
-            default:
+                        case 0b00000001:  // 1=EMERGENCY_STOP
+                            speed = 0 ;     // => 0
+                            break ;
+
+                        default:          // 2..127
+                            speed = (Data1 & 0b01111111) ;
+                        }
+                        dir = (DCC_DIRECTION) ( (Data1 & 0b10000000) >> 7) ;
+                        notifyDccSpeed (Addr, AddrType, speed, dir, SPEED_STEP_128) ;
+                    }
+                }
+                break;
+
+            case 0b01000000:
+            case 0b01100000:
+                //TODO should we cache this info in DCC_PROCESSOR_STATE.Flags ?
                 #ifdef NMRA_DCC_ENABLE_14_SPEED_STEP_MODE
-                if (speedSteps == SPEED_STEP_14)
-                {
-                    speed = (Cmd & 0b00001111) ; // => 2..15
-                }
-                else
-                {
+                speedSteps = (DccProcState.cv29Value & CV29_F0_LOCATION) ? SPEED_STEP_28 : SPEED_STEP_14 ;
+                #else
+                speedSteps = SPEED_STEP_28 ;
                 #endif
-                    speed = ( ( (Cmd & 0b00001111) << 1) | ( (Cmd & 0b00010000) >> 4)) - 2 ; // => 2..29
-                    #ifdef NMRA_DCC_ENABLE_14_SPEED_STEP_MODE
+                if (notifyDccSpeed)
+                {
+                    switch (Cmd & 0b00011111)
+                    {
+                    case 0b00000000:    // 0 0000 = STOP
+                    case 0b00010000:    // 1 0000 = STOP
+                        speed = 1 ;       // => 1
+                        break ;
+
+                    case 0b00000001:    // 0 0001 = EMERGENCY STOP
+                    case 0b00010001:    // 1 0001 = EMERGENCY STOP
+                        speed = 0 ;       // => 0
+                        break ;
+
+                    default:
+                        #ifdef NMRA_DCC_ENABLE_14_SPEED_STEP_MODE
+                        if (speedSteps == SPEED_STEP_14)
+                        {
+                            speed = (Cmd & 0b00001111) ; // => 2..15
+                        }
+                        else
+                        {
+                        #endif
+                            speed = ( ( (Cmd & 0b00001111) << 1) | ( (Cmd & 0b00010000) >> 4)) - 2 ; // => 2..29
+                            #ifdef NMRA_DCC_ENABLE_14_SPEED_STEP_MODE
+                        }
+                            #endif
+                    }
+                    dir = (DCC_DIRECTION) ( (Cmd & 0b00100000) >> 5) ;
+                    notifyDccSpeed (Addr, AddrType, speed, dir, speedSteps) ;
                 }
-                    #endif
+                if (notifyDccSpeedRaw)
+                    notifyDccSpeedRaw (Addr, AddrType, Cmd);
+
+                #ifdef NMRA_DCC_ENABLE_14_SPEED_STEP_MODE
+                if (notifyDccFunc && (speedSteps == SPEED_STEP_14))
+                {
+                    // function light is controlled by this package
+                    uint8_t fn0 = (Cmd & 0b00010000) ;
+                    notifyDccFunc (Addr, AddrType, FN_0, fn0) ;
+                }
+                #endif
+                break;
+
+            case 0b10000000:  // Function Group 0..4
+                if (notifyDccFunc)
+                {
+                    // function light is controlled by this package (28 or 128 speed steps)
+                    notifyDccFunc (Addr, AddrType, FN_0_4, Cmd & 0b00011111) ;
+                }
+                break;
+
+            case 0b10100000:  // Function Group 5..8
+                if (notifyDccFunc)
+                {
+                    if (Cmd & 0b00010000)
+                        notifyDccFunc (Addr, AddrType, FN_5_8,  Cmd & 0b00001111) ;
+                    else
+                        notifyDccFunc (Addr, AddrType, FN_9_12, Cmd & 0b00001111) ;
+                }
+                break;
+
+            case 0b11000000:  // Feature Expansion Instruction
+                switch (Cmd & 0b00011111)
+                {
+                case 0b00011110:
+                    if (notifyDccFunc)
+                        notifyDccFunc (Addr, AddrType, FN_13_20, Data1) ;
+                    break;
+
+                case 0b00011111:
+                    if (notifyDccFunc)
+                        notifyDccFunc (Addr, AddrType, FN_21_28, Data1) ;
+                    break;
+                }
+                break;
             }
-            dir = (DCC_DIRECTION) ( (Cmd & 0b00100000) >> 5) ;
-            notifyDccSpeed (Addr, AddrType, speed, dir, speedSteps) ;
         }
-        if (notifyDccSpeedRaw)
-            notifyDccSpeedRaw (Addr, AddrType, Cmd);
-
-        #ifdef NMRA_DCC_ENABLE_14_SPEED_STEP_MODE
-        if (notifyDccFunc && (speedSteps == SPEED_STEP_14))
+        // The following commands (CV Access) respond at DCC Primary Address only
+        if (!(DccProcState.Flags & FLAGS_MY_ADDRESS_ONLY) || (Addr == getMyAddr()) || (Addr == 0))
         {
-            // function light is controlled by this package
-            uint8_t fn0 = (Cmd & 0b00010000) ;
-            notifyDccFunc (Addr, AddrType, FN_0, fn0) ;
+            switch (CmdMasked)
+            {
+            case 0b11100000:  // CV Access
+                CVAddr = ( ( (Cmd & 0x03) << 8) | Data1) + 1 ;
+
+                processDirectCVOperation (Cmd, CVAddr, Data2, ackAdvancedCV) ;
+                break;
+            }
         }
-        #endif
-        break;
-
-    case 0b10000000:  // Function Group 0..4
-        if (notifyDccFunc)
-        {
-            // function light is controlled by this package (28 or 128 speed steps)
-            notifyDccFunc (Addr, AddrType, FN_0_4, Cmd & 0b00011111) ;
-        }
-        break;
-
-    case 0b10100000:  // Function Group 5..8
-        if (notifyDccFunc)
-        {
-            if (Cmd & 0b00010000)
-                notifyDccFunc (Addr, AddrType, FN_5_8,  Cmd & 0b00001111) ;
-            else
-                notifyDccFunc (Addr, AddrType, FN_9_12, Cmd & 0b00001111) ;
-        }
-        break;
-
-    case 0b11000000:  // Feature Expansion Instruction
-        switch (Cmd & 0b00011111)
-        {
-        case 0b00011110:
-            if (notifyDccFunc)
-                notifyDccFunc (Addr, AddrType, FN_13_20, Data1) ;
-            break;
-
-        case 0b00011111:
-            if (notifyDccFunc)
-                notifyDccFunc (Addr, AddrType, FN_21_28, Data1) ;
-            break;
-        }
-        break;
-
-    case 0b11100000:  // CV Access
-        CVAddr = ( ( (Cmd & 0x03) << 8) | Data1) + 1 ;
-
-        processDirectCVOperation (Cmd, CVAddr, Data2, ackAdvancedCV) ;
-        break;
     }
 }
 #endif
@@ -1682,6 +1697,7 @@ void NmraDcc::init (uint8_t ManufacturerId, uint8_t VersionId, uint8_t Flags, ui
     DccProcState.Flags = Flags ;
     DccProcState.OpsModeAddressBaseCV = OpsModeAddressBaseCV ;
     DccProcState.myDccAddress = -1;
+    DccProcState.dccConsistAddress = 0;
     DccProcState.inAccDecDCCAddrNextReceivedMode = 0;
 
     ISREdge = RISING;
