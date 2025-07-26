@@ -39,6 +39,9 @@
 //            2019-02-17 added ESP32 specific changes by Hans Tanner
 //            2020-05-15 changes to pass NMRA Tests ( always search for preamble )
 //            2021-03-11 fix ESP32 bug on interrupt reinitialisation
+//            2025-07-26 added support for CV19 Consist Address. When defined (not zero),
+//                       speed and function commands respond at consist address, not
+//                       at the primary DCC address
 //------------------------------------------------------------------------
 //
 // purpose:   Provide a simplified interface to decode NMRA DCC packets
