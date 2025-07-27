@@ -39,9 +39,10 @@
 //            2019-02-17 added ESP32 specific changes by Hans Tanner
 //            2020-05-15 changes to pass NMRA Tests ( always search for preamble )
 //            2021-03-11 fix ESP32 bug on interrupt reinitialisation
-//            2025-07-26 added support for CV19 Consist Address. When defined (not zero),
-//                       speed and function commands respond at consist address, not
-//                       at the primary DCC address
+//            2025-07-26 added basic support for CV19 Consist Address, with the following
+//                       usage. When CV19 is defined (not zero), speed and function
+//                       commands respond at Consist Address, not
+//                       at the primary (short or long) DCC address
 //------------------------------------------------------------------------
 //
 // purpose:   Provide a simplified interface to decode NMRA DCC packets
@@ -1700,7 +1701,7 @@ void NmraDcc::init (uint8_t ManufacturerId, uint8_t VersionId, uint8_t Flags, ui
     DccProcState.Flags = Flags ;
     DccProcState.OpsModeAddressBaseCV = OpsModeAddressBaseCV ;
     DccProcState.myDccAddress = -1;
-    DccProcState.dccConsistAddress = 0;
+    DccProcState.dccConsistAddress = readCV(CV_MULTIFUNCTION_CONSIST_ADDRESS);
     DccProcState.inAccDecDCCAddrNextReceivedMode = 0;
 
     ISREdge = RISING;
